@@ -5,8 +5,9 @@ Score the repair model on the test split.
     python -m repair.evaluate --no-model       # baseline only (needs no model, runs in a minute)
     python -m repair.evaluate --adapter none   # baseline + deepseek-coder without fine-tuning
 
-Fix rate  = share of patches that compile (Icarus Verilog) AND are proven to
-            behave like the original module (Yosys equivalence check).
+Fix rate  = share of modules that, after the repair, compile (Icarus Verilog)
+            AND are proven to behave like the original (Yosys equivalence check).
+            A module the model has no usable fix for stays as it was.
 Baseline  = return the buggy input unchanged.
 
 Fix rate is measured on the "scorable" modules: the original compiles on its
@@ -27,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 import rtl_tools
-from repair.prompt import FORMATS, apply_answer, normalize
+from repair.prompt import FORMATS, normalize
 from splits import add_split
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +44,8 @@ def parse_args():
     p.add_argument("--split", default="test", choices=["test", "val"])
     p.add_argument("--limit", default=None, type=int, help="use only this many modules")
     p.add_argument("--batch-size", default=4, type=int)
+    p.add_argument("--beams", default=None, type=int,
+                   help="answers tried when the first one is not usable; 1 = no second try (default: 4)")
     p.add_argument("--out", default=ROOT / "outputs" / "repair_eval", type=Path)
     return p.parse_args()
 
@@ -53,12 +56,10 @@ def is_scorable(original):
 
 
 def score(original, patch, scorable):
-    """Judge one patch (None = the model gave no usable answer)."""
-    result = {"valid": patch is not None, "exact": False, "compiles": False, "fixed": False}
-    if patch is None:
-        return result
+    """Judge one module after the repair."""
+    result = {"exact": False, "compiles": False, "fixed": False}
     if patch.split() == original.split():           # same text up to whitespace: no tools needed
-        return {**result, "exact": True, "compiles": scorable, "fixed": scorable}
+        return {"exact": True, "compiles": scorable, "fixed": scorable}
     if scorable:
         result["compiles"] = rtl_tools.compiles(patch)[0]
         result["fixed"] = (result["compiles"]
@@ -109,7 +110,7 @@ def main():
     results = {"split": args.split, "model": None}
 
     if not args.no_model:
-        from repair.model import adapter_format, generate_answers, load
+        from repair.model import BEAMS, adapter_format, load, repair_many
         adapter = None if args.adapter.lower() == "none" else args.adapter
         fmt = args.format or (adapter_format(adapter) if adapter else "edit")
         results["model"] = f"deepseek-coder + LoRA ({adapter})" if adapter else "deepseek-coder, no fine-tuning"
@@ -119,23 +120,30 @@ def main():
 
         def progress(i, n):
             print(f"  generated {i}/{n}  ({(time.time() - start) / 60:.1f} min)", flush=True)
-        answers = generate_answers(model, tok, buggy, list(rows.bug_type), fmt, args.batch_size, progress)
-        patches = [apply_answer(b, a, fmt) for b, a in zip(buggy, answers)]
-        scores = run_parallel(score, zip(originals, patches, scorable))
-        rows = rows.assign(**{k: [s[k] for s in scores] for k in scores[0]})
+        beams = args.beams or BEAMS
+        patches, answers, attempts = zip(*repair_many(model, tok, buggy, list(rows.bug_type), fmt,
+                                                      args.batch_size, beams, progress))
+        # a module without a usable fix stays as it was
+        scores = run_parallel(score, zip(originals, [p or b for p, b in zip(patches, buggy)], scorable))
+        rows = rows.assign(valid=[p is not None for p in patches], **{k: [s[k] for s in scores] for k in scores[0]})
+        results["beams"] = beams
+        results["second_try_fixes"] = sum(a is not None and a > 0 for a in attempts)
+        results["left_unchanged"] = sum(p is None for p in patches)
 
         with open(args.out / "predictions.jsonl", "w", encoding="utf-8") as f:
-            for r, answer, patch in zip(rows.itertuples(), answers, patches):
+            for r, answer, patch, attempt in zip(rows.itertuples(), answers, patches, attempts):
                 f.write(json.dumps({"module": r.module, "bug_type": r.bug_type, "bug_line": r.bug_line,
                                     "scorable": r.scorable, "valid": r.valid, "exact": r.exact,
-                                    "compiles": r.compiles, "fixed": r.fixed,
-                                    "baseline_fixed": r.base_fixed, "answer": answer, "patch": patch}) + "\n")
+                                    "compiles": r.compiles, "fixed": r.fixed, "baseline_fixed": r.base_fixed,
+                                    "attempt": attempt, "answer": answer, "patch": patch}) + "\n")
 
     table = summarize(rows, with_model=not args.no_model)
     results["table"] = table.to_dict("index")
     print(f"\n{results['model'] or 'Baseline only'}\n{table.to_string()}\n")
     if not args.no_model:
-        print("valid: the answer could be applied   exact: the patch has the original's text   (both over all n modules)\n"
+        print(f"{results['second_try_fixes']} fixes came from a second try (beam search, {results['beams']} beams); "
+              f"{results['left_unchanged']} modules had no usable fix and stay unchanged\n"
+              "valid: the model gave a usable fix   exact: the result has the original's text   (both over all n modules)\n"
               "compiles, fix_rate: over the scorable modules; fix_rate = compiles and proven equivalent to the original")
     print("baseline_fix_rate: fix rate of returning the input unchanged (same scorable modules)")
     (args.out / "metrics.json").write_text(json.dumps(results, indent=2))

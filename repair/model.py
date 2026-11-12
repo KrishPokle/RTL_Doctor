@@ -2,7 +2,11 @@
 Load deepseek-coder (with or without the LoRA adapter) and generate repairs.
 
     model, tok = load("checkpoints/repair")
-    patched = repair_rtl(model, tok, code, "blocking_in_seq")
+    patched = repair_rtl(model, tok, code, "blocking_in_seq")     # None: no usable fix
+
+A fix has to apply to the module and must not break its build (Icarus Verilog).
+The model's first answer is tried first; if it fails, the answers of a beam
+search are tried in order.
 """
 import json
 from pathlib import Path
@@ -10,9 +14,10 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from repair.prompt import apply_answer, build_prompt
+from repair.prompt import build_prompt, usable_patch
 
 BASE_MODEL = "deepseek-ai/deepseek-coder-1.3b-instruct"
+BEAMS = 4           # answers tried when the first one is not usable
 
 
 def pick_device():
@@ -62,8 +67,11 @@ def prompt_ids(tok, code, bug_type, fmt):
 
 
 @torch.no_grad()
-def generate_answers(model, tok, codes, bug_types, fmt="edit", batch_size=4, progress=None):
-    """Raw model answers for a list of buggy modules (greedy decoding)."""
+def generate_answers(model, tok, codes, bug_types, fmt="edit", batch_size=4, beams=1, progress=None):
+    """
+    Raw model answers for a list of buggy modules: `beams` answers per module, best first.
+    One beam is greedy decoding. More beams is a beam search that returns every beam.
+    """
     prompts = [prompt_ids(tok, c, b, fmt) for c, b in zip(codes, bug_types)]
     order = sorted(range(len(prompts)), key=lambda i: len(prompts[i]))   # similar lengths together
     answers = [None] * len(prompts)
@@ -74,15 +82,44 @@ def generate_answers(model, tok, codes, bug_types, fmt="edit", batch_size=4, pro
         # an edit is a few lines; a full module is about as long as its input
         new_tokens = 256 if fmt == "edit" else max(len(tok(codes[i]).input_ids) for i in idx) + 64
         out = model.generate(**batch, max_new_tokens=new_tokens, do_sample=False,
+                             num_beams=beams, num_return_sequences=beams,
                              eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id)
-        for i, row in zip(idx, out):
-            answers[i] = tok.decode(row[width:], skip_special_tokens=True)
+        texts = tok.batch_decode(out[:, width:], skip_special_tokens=True)
+        for n, i in enumerate(idx):
+            answers[i] = texts[n * beams:(n + 1) * beams]
         if progress:
             progress(min(start + batch_size, len(order)), len(order))
     return answers
 
 
+def repair_many(model, tok, codes, bug_types, fmt="edit", batch_size=4, beams=BEAMS, progress=None):
+    """
+    Repair a list of buggy modules. Per module: (patch, answer, attempt).
+
+    attempt 0 is the greedy answer. Where that gives no usable patch (see
+    repair.prompt.usable_patch), the answers of a beam search are tried in
+    order: attempt 1, 2, ... If none is usable, patch and attempt are None
+    and answer is the greedy one.
+    """
+    results = []
+    for code, (answer,) in zip(codes, generate_answers(model, tok, codes, bug_types, fmt, batch_size,
+                                                       progress=progress)):
+        patch = usable_patch(code, answer, fmt)
+        results.append((patch, answer, None if patch is None else 0))
+    again = [i for i, (patch, _, _) in enumerate(results) if patch is None]
+    if again and beams > 1:
+        # one module at a time: a beam search holds `beams` copies of the prompt
+        tries = generate_answers(model, tok, [codes[i] for i in again], [bug_types[i] for i in again], fmt,
+                                 batch_size=1, beams=beams, progress=progress)
+        for i, answers in zip(again, tries):
+            for attempt, answer in enumerate(answers, start=1):
+                patch = usable_patch(codes[i], answer, fmt)
+                if patch is not None:
+                    results[i] = (patch, answer, attempt)
+                    break
+    return results
+
+
 def repair_rtl(model, tok, code, bug_type, fmt="edit"):
-    """Patched module for one buggy module, or None if the model's answer is unusable."""
-    answer = generate_answers(model, tok, [code], [bug_type], fmt)[0]
-    return apply_answer(code, answer, fmt)
+    """Patched module for one buggy module, or None if the model has no usable fix."""
+    return repair_many(model, tok, [code], [bug_type], fmt)[0][0]

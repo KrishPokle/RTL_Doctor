@@ -10,7 +10,7 @@ import shutil
 import pytest
 
 import rtl_tools
-from repair.prompt import apply_answer, build_answer, build_prompt, make_edit
+from repair.prompt import apply_answer, build_answer, build_prompt, make_edit, usable_patch
 from splits import split_of
 
 GOOD = """module counter (
@@ -115,3 +115,37 @@ def test_bugs_are_not_equivalent(bug):
 def test_original_without_outputs_is_uncheckable():
     testbench = "module tb;\n  reg clk = 0;\n  always #5 clk = ~clk;\nendmodule\n"
     assert rtl_tools.equivalent(testbench, testbench)[0] == rtl_tools.UNCHECKABLE
+
+
+# ------------------------------------------------------------------ choosing a usable fix
+FIX = "<<<<<<< SEARCH\n    else if (!en) cnt <= cnt + 8'd1;\n=======\n    else if (en) cnt <= cnt + 8'd1;\n>>>>>>> REPLACE"
+NOT_FOUND = "<<<<<<< SEARCH\nnot in the module\n=======\nx\n>>>>>>> REPLACE"
+
+
+@needs_tools
+def test_usable_patch_keeps_a_fix_and_drops_what_breaks_the_build():
+    buggy = BUGS["inverted_condition"]
+    assert usable_patch(buggy, FIX) == GOOD
+    assert usable_patch(buggy, FIX.replace("(en) cnt", "(en cnt")) is None      # no longer compiles
+    assert usable_patch(buggy, FIX.replace("(en)", "(!en)")) is None            # changes nothing
+    assert usable_patch(buggy, NOT_FOUND) is None
+
+
+@needs_tools
+def test_usable_patch_cannot_ask_the_compiler_about_a_module_that_needs_other_files():
+    buggy = BUGS["inverted_condition"].replace("assign sum = a + b;", "adder u1 (a, b, sum);")
+    assert not rtl_tools.compiles(buggy)[0]             # `adder` is defined somewhere else
+    assert usable_patch(buggy, FIX) == buggy.replace("if (!en)", "if (en)")
+
+
+@needs_tools
+def test_repair_many_tries_the_next_answers_in_order(monkeypatch):
+    model = pytest.importorskip("repair.model")         # needs torch
+
+    def answers(_model, _tok, codes, bug_types, fmt="edit", batch_size=4, beams=1, progress=None):
+        return [[NOT_FOUND, FIX, NOT_FOUND][:beams] for _ in codes]     # the first answer is never usable
+    monkeypatch.setattr(model, "generate_answers", answers)
+    buggy = BUGS["inverted_condition"]
+    assert model.repair_many(None, None, [buggy], ["inverted_condition"], beams=3) == [(GOOD, FIX, 2)]
+    assert model.repair_many(None, None, [buggy], ["inverted_condition"], beams=1) == [(None, NOT_FOUND, None)]
+    assert model.repair_rtl(None, None, buggy, "inverted_condition") == GOOD

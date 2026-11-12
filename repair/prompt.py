@@ -6,11 +6,14 @@ Output, format "edit":   one SEARCH/REPLACE block: the buggy lines, then the fix
 Output, format "module": the whole corrected module.
 
 Either way the caller ends up with a full patched module (apply_answer).
+usable_patch also has the compiler check it, so a "fix" never breaks the build.
 "edit" is the default: the answer is ~50 tokens instead of ~750, so training and
 inference are much cheaper, and the model cannot corrupt lines it never touches.
 """
 import difflib
 import re
+
+import rtl_tools
 
 FORMATS = ("edit", "module")
 
@@ -118,3 +121,19 @@ def apply_answer(buggy, answer, fmt="edit"):
         return m.group(1) if m else None
     m = _EDIT_RE.search(answer)
     return apply_edit(buggy, m.group(1), m.group(2)) if m else None
+
+
+def usable_patch(buggy, answer, fmt="edit"):
+    """
+    The patched module if the answer is a usable fix, else None.
+
+    Usable: the answer applies, it changes the module, and it does not break a
+    module that compiled. A module that needs other files does not compile on
+    its own, with or without the patch, so there the compiler has no say.
+    """
+    patch = apply_answer(buggy, answer, fmt)
+    if patch is None or patch.split() == buggy.split():
+        return None
+    if rtl_tools.compiles(patch)[0] or not rtl_tools.compiles(buggy)[0]:
+        return patch
+    return None
