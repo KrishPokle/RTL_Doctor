@@ -46,7 +46,7 @@ def parse_args():
     p.add_argument("--rank", default=16, type=int, help="LoRA rank")
     p.add_argument("--dropout", default=0.05, type=float, help="LoRA dropout (0 uses less memory)")
     p.add_argument("--save-memory", action=argparse.BooleanOptionalAction, default=True,
-                   help="gradient checkpointing: far less memory, ~20%% more time (--no-save-memory needs about 14 GB of RAM)")
+                   help="gradient checkpointing: less memory, slightly slower (--no-save-memory needs over 14 GB of RAM)")
     p.add_argument("--accum", default=8, type=int, help="examples per optimizer step")
     p.add_argument("--max-tokens", default=2048, type=int, help="skip examples longer than this")
     p.add_argument("--save-every", default=25, type=int, help="optimizer steps between checkpoints")
@@ -114,7 +114,7 @@ def main():
     df = add_split(pd.read_csv(args.data))
     df = df[df.label == "buggy"]
     model, tok = load_base()
-    if args.save_memory:                                    # a long module needs about 14 GB otherwise
+    if args.save_memory:                                    # a long module needs over 14 GB otherwise
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     train, skipped = encode(tok, df[df.split == "train"], args.format, args.max_tokens)
     val, _ = encode(tok, df[df.split == "val"].head(args.val_examples), args.format, args.max_tokens)

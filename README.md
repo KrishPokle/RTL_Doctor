@@ -72,7 +72,7 @@ python -m repair.evaluate                 # fix rate on the test split, next to 
 python -m repair.evaluate --no-model      # baseline only
 ```
 
-It trains on a GPU if there is one and on the CPU otherwise. Gradient checkpointing is on by default; without it (`--no-save-memory`) training is about 20% faster but a long module needs about 14 GB of RAM. `--max-minutes 100` stops cleanly with a checkpoint so the run can go on later with `--resume`.
+It trains on a GPU if there is one and on the CPU otherwise. Gradient checkpointing is on by default and the run below peaked at about 9 GB of RAM. `--no-save-memory` is slightly faster, but it reached 14 GB before the longest modules came up. `--max-minutes 100` stops cleanly with a checkpoint so the run can go on later with `--resume`.
 
 **Fix rate** is the share of patches that compile with Icarus Verilog and that Yosys proves equivalent to the original module. **Baseline**: return the buggy input unchanged.
 
@@ -80,21 +80,22 @@ Fix rate can only be measured on modules the tools can judge: the original has t
 
 ### First run (Nov 12)
 
-One epoch on 1,663 train examples (`--epochs 1 --dropout 0`, LoRA rank 16, CPU, 190 minutes), scored on the test split: 235 buggy modules, 97 of them scorable.
+One epoch on 1,657 train examples (`--epochs 1 --dropout 0`, LoRA rank 16, CPU, 199 minutes), scored on the test split: 227 buggy modules, 90 of them scorable.
 
 | bug type | scorable | fix rate | baseline | exact (all modules) |
 |---|---|---|---|---|
-| blocking_in_seq | 19 | 89.5% | 94.7% | 78.3% of 46 |
-| inverted_condition | 16 | 81.2% | 6.2% | 66.7% of 45 |
-| missing_default | 12 | 33.3% | 50.0% | 9.1% of 22 |
-| reset_polarity | 26 | 92.3% | 3.8% | 86.5% of 37 |
-| width_off_by_one | 9 | 44.4% | 11.1% | 36.2% of 47 |
-| wrong_operator | 15 | 66.7% | 26.7% | 47.4% of 38 |
-| **all** | **97** | **74.2%** | **32.0%** | **57.4% of 235** |
+| blocking_in_seq | 18 | 88.9% | 100.0% | 82.6% of 46 |
+| inverted_condition | 11 | 72.7% | 0.0% | 81.6% of 38 |
+| missing_default | 15 | 40.0% | 60.0% | 4.3% of 23 |
+| reset_polarity | 24 | 83.3% | 4.2% | 71.4% of 35 |
+| width_off_by_one | 6 | 33.3% | 16.7% | 60.0% of 45 |
+| wrong_operator | 16 | 68.8% | 12.5% | 55.0% of 40 |
+| **all** | **90** | **70.0%** | **34.4%** | **63.4% of 227** |
 
 - The baseline is high for `blocking_in_seq` and `missing_default` because Yosys compares synthesized hardware: `=` and `<=` usually synthesize to the same circuit, and so does a full `case` without its `default`. For these two, `exact` says more than fix rate.
-- 94.5% of the answers could be applied to the module. The others name lines that are not in it.
-- The per-type numbers are on 9 to 26 modules each, so they move a lot from one module.
+- 96.9% of the answers could be applied to the module. Of the other seven, six name lines that are not in it and one ran past the length limit.
+- When a module has several identical `always @(posedge clk or negedge rst)` lines and one is flipped, the model sometimes flips another one instead of the odd one out.
+- The per-type numbers are on 6 to 24 modules each, so they move a lot from one module.
 
 ## Rules
 
