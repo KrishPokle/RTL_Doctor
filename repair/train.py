@@ -47,7 +47,7 @@ def parse_args():
     p.add_argument("--rank", default=16, type=int, help="LoRA rank")
     p.add_argument("--dropout", default=0.05, type=float, help="LoRA dropout (0 uses less memory)")
     p.add_argument("--save-memory", action=argparse.BooleanOptionalAction, default=None,
-                   help="gradient checkpointing: far less memory, ~40%% more time (default: on for a GPU)")
+                   help="gradient checkpointing: far less memory, ~20%% more time (default: on for a GPU)")
     p.add_argument("--accum", default=8, type=int, help="examples per optimizer step")
     p.add_argument("--max-tokens", default=2048, type=int, help="skip examples longer than this")
     p.add_argument("--save-every", default=25, type=int, help="optimizer steps between checkpoints")
