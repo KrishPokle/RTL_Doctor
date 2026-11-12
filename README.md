@@ -78,6 +78,24 @@ It trains on a GPU if there is one and on the CPU otherwise. On a GPU it turns o
 
 Fix rate can only be measured on modules the tools can judge: the original has to compile on its own and be synthesizable with at least one output. About a third of the dataset qualifies. The rest include other files, use modules defined elsewhere, or are testbenches. For those, `evaluate.py` reports only `exact`: the patch has the same text as the original.
 
+### First run (Nov 12)
+
+One epoch on 1,663 train examples (`--epochs 1 --dropout 0`, LoRA rank 16, CPU, 190 minutes), scored on the test split: 235 buggy modules, 97 of them scorable.
+
+| bug type | scorable | fix rate | baseline | exact (all modules) |
+|---|---|---|---|---|
+| blocking_in_seq | 19 | 89.5% | 94.7% | 78.3% of 46 |
+| inverted_condition | 16 | 81.2% | 6.2% | 66.7% of 45 |
+| missing_default | 12 | 33.3% | 50.0% | 9.1% of 22 |
+| reset_polarity | 26 | 92.3% | 3.8% | 86.5% of 37 |
+| width_off_by_one | 9 | 44.4% | 11.1% | 36.2% of 47 |
+| wrong_operator | 15 | 66.7% | 26.7% | 47.4% of 38 |
+| **all** | **97** | **74.2%** | **32.0%** | **57.4% of 235** |
+
+- The baseline is high for `blocking_in_seq` and `missing_default` because Yosys compares synthesized hardware: `=` and `<=` usually synthesize to the same circuit, and so does a full `case` without its `default`. For these two, `exact` says more than fix rate.
+- 94.5% of the answers could be applied to the module. The others name lines that are not in it.
+- The per-type numbers are on 9 to 26 modules each, so they move a lot from one module.
+
 ## Rules
 
 - Never commit API keys or passwords. Put them in `.env` (ignored by git).
