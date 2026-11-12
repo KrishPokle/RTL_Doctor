@@ -72,7 +72,7 @@ python -m repair.evaluate                 # fix rate on the test split, next to 
 python -m repair.evaluate --no-model      # baseline only
 ```
 
-It trains on a GPU if there is one and on the CPU otherwise. On a CPU, add `--max-minutes 110` to stop cleanly with a checkpoint, then `--resume`.
+It trains on a GPU if there is one and on the CPU otherwise. On a GPU it turns on gradient checkpointing (`--save-memory`) so that long modules fit in 16 GB. On a CPU, `--dropout 0` keeps memory under 11 GB, and `--max-minutes 100` stops cleanly with a checkpoint so the run can go on later with `--resume`.
 
 **Fix rate** is the share of patches that compile with Icarus Verilog and that Yosys proves equivalent to the original module. **Baseline**: return the buggy input unchanged.
 

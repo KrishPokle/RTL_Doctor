@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from peft import LoraConfig, PeftModel, get_peft_model
 
 from repair.model import load_base, pick_device, prompt_ids
@@ -31,7 +32,8 @@ from splits import add_split
 
 ROOT = Path(__file__).resolve().parent.parent
 LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]     # the attention layers
-SCHEDULE_SETTINGS = ["format", "epochs", "limit", "lr", "rank", "accum", "max_tokens", "val_examples", "seed"]
+RUN_SETTINGS = ["format", "epochs", "limit", "lr", "rank", "dropout", "save_memory", "accum", "max_tokens",
+                "val_examples", "seed"]
 
 
 def parse_args():
@@ -43,6 +45,9 @@ def parse_args():
     p.add_argument("--limit", default=None, type=int, help="train on only this many examples")
     p.add_argument("--lr", default=2e-4, type=float)
     p.add_argument("--rank", default=16, type=int, help="LoRA rank")
+    p.add_argument("--dropout", default=0.05, type=float, help="LoRA dropout (0 uses less memory)")
+    p.add_argument("--save-memory", action=argparse.BooleanOptionalAction, default=None,
+                   help="gradient checkpointing: far less memory, ~40%% more time (default: on for a GPU)")
     p.add_argument("--accum", default=8, type=int, help="examples per optimizer step")
     p.add_argument("--max-tokens", default=2048, type=int, help="skip examples longer than this")
     p.add_argument("--save-every", default=25, type=int, help="optimizer steps between checkpoints")
@@ -71,8 +76,17 @@ def encode(tok, rows, fmt, max_tokens):
 
 
 def loss_of(model, example):
-    ids, labels = (torch.tensor([x], device=model.device) for x in example)
-    return model(input_ids=ids, labels=labels).loss
+    """
+    Cross-entropy on the answer tokens of one example.
+    Same value as model(input_ids, labels).loss, but only the answer positions go
+    through the vocabulary layer, which saves memory and time on long prompts.
+    """
+    ids, labels = example
+    n = labels.count(-100)                              # prompt length: the answer starts here
+    lm = model.get_base_model()                         # deepseek-coder with the LoRA layers inside
+    hidden = lm.base_model(input_ids=torch.tensor([ids], device=model.device)).last_hidden_state[0]
+    logits = lm.get_output_embeddings()(hidden[n - 1:-1])       # position i predicts token i + 1
+    return F.cross_entropy(logits.float(), torch.tensor(ids[n:], device=model.device))
 
 
 @torch.no_grad()
@@ -94,13 +108,17 @@ def main():
             raise SystemExit(f"--resume: no run to continue in {args.out}")
         # the run's own settings decide the example order and the schedule, so reuse them
         saved = json.loads((args.out / "run_config.json").read_text())
-        for key in SCHEDULE_SETTINGS:
+        for key in RUN_SETTINGS:
             setattr(args, key, saved[key])
 
     # ---- data: buggy rows only, split shared with the detector
     df = add_split(pd.read_csv(args.data))
     df = df[df.label == "buggy"]
     model, tok = load_base()
+    if args.save_memory is None:
+        args.save_memory = pick_device()[0] == "cuda"      # a 16 GB GPU cannot hold a long module otherwise
+    if args.save_memory:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     train, skipped = encode(tok, df[df.split == "train"], args.format, args.max_tokens)
     val, _ = encode(tok, df[df.split == "val"].head(args.val_examples), args.format, args.max_tokens)
     random.Random(args.seed).shuffle(train)
@@ -114,7 +132,7 @@ def main():
     if args.resume:
         model = PeftModel.from_pretrained(model, args.out, is_trainable=True)
     else:
-        model = get_peft_model(model, LoraConfig(r=args.rank, lora_alpha=2 * args.rank, lora_dropout=0.05,
+        model = get_peft_model(model, LoraConfig(r=args.rank, lora_alpha=2 * args.rank, lora_dropout=args.dropout,
                                                  target_modules=LORA_TARGETS, task_type="CAUSAL_LM"))
     model.train()
     model.print_trainable_parameters()
