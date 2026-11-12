@@ -26,6 +26,7 @@ Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https:/
 |---|---|
 | `make_dataset.py` | Pulls Verilog from [shailja/Verilog_GitHub](https://huggingface.co/datasets/shailja/Verilog_GitHub) and injects one bug per module |
 | `rtl_dataset.ipynb` | Dataset overview: `df.head()`, bug-type plot, baseline |
+| `docs/Project_M1_Proposal.pdf` | The M1 project proposal: models, tools, portal, guardrails, Nov 20 targets |
 
 ## Dataset
 
