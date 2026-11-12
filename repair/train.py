@@ -32,8 +32,7 @@ from splits import add_split
 
 ROOT = Path(__file__).resolve().parent.parent
 LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]     # the attention layers
-RUN_SETTINGS = ["format", "epochs", "limit", "lr", "rank", "dropout", "save_memory", "accum", "max_tokens",
-                "val_examples", "seed"]
+RUN_SETTINGS = ["format", "epochs", "limit", "lr", "rank", "dropout", "accum", "max_tokens", "val_examples", "seed"]
 
 
 def parse_args():
@@ -46,8 +45,8 @@ def parse_args():
     p.add_argument("--lr", default=2e-4, type=float)
     p.add_argument("--rank", default=16, type=int, help="LoRA rank")
     p.add_argument("--dropout", default=0.05, type=float, help="LoRA dropout (0 uses less memory)")
-    p.add_argument("--save-memory", action=argparse.BooleanOptionalAction, default=None,
-                   help="gradient checkpointing: far less memory, ~20%% more time (default: on for a GPU)")
+    p.add_argument("--save-memory", action=argparse.BooleanOptionalAction, default=True,
+                   help="gradient checkpointing: far less memory, ~20%% more time (--no-save-memory needs about 14 GB of RAM)")
     p.add_argument("--accum", default=8, type=int, help="examples per optimizer step")
     p.add_argument("--max-tokens", default=2048, type=int, help="skip examples longer than this")
     p.add_argument("--save-every", default=25, type=int, help="optimizer steps between checkpoints")
@@ -115,9 +114,7 @@ def main():
     df = add_split(pd.read_csv(args.data))
     df = df[df.label == "buggy"]
     model, tok = load_base()
-    if args.save_memory is None:
-        args.save_memory = pick_device()[0] == "cuda"      # a 16 GB GPU cannot hold a long module otherwise
-    if args.save_memory:
+    if args.save_memory:                                    # a long module needs about 14 GB otherwise
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     train, skipped = encode(tok, df[df.split == "train"], args.format, args.max_tokens)
     val, _ = encode(tok, df[df.split == "val"].head(args.val_examples), args.format, args.max_tokens)
