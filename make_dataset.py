@@ -32,56 +32,63 @@ random.seed(SEED)
 
 # ---------------------------------------------------------------- bug injectors
 # Each takes code and returns (buggy_code, line_number) or None if not applicable.
+# A pattern marks the text to change with the group (?P<fix>...). Only that text
+# changes: the spacing around it stays as the author wrote it.
+
+_NOT_CODE = re.compile(r'//[^\n]*|/\*.*?(?:\*/|\Z)|"(?:\\.|[^"\\\n])*"', re.S)   # comments and strings
+
+
+def _blank_comments(code):
+    """The code with comments and strings turned into spaces (same length, same lines)."""
+    return _NOT_CODE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), code)
+
 
 def _line_of(code, idx):
     return code.count("\n", 0, idx) + 1
 
 
 def _sub_one(code, pattern, repl, flags=re.M):
-    matches = list(re.finditer(pattern, code, flags))
+    # search the code without its comments, so a bug never lands in a comment or a string
+    matches = list(re.finditer(pattern, _blank_comments(code), flags))
     if not matches:
         return None
     m = random.choice(matches)
-    new = m.expand(repl) if isinstance(repl, str) else repl(m)
-    return code[:m.start()] + new + code[m.end():], _line_of(code, m.start())
+    start, end = m.span("fix")
+    new = repl(m) if callable(repl) else repl
+    return code[:start] + new + code[end:], _line_of(code, start)
 
 
 def blocking_in_seq(code):
     # q <= d;  ->  q = d;   (non-blocking turned blocking)
-    return _sub_one(code, r"^(\s*[A-Za-z_]\w*(?:\[[^\]]*\])?\s*)<=", r"\1=")
+    return _sub_one(code, r"^\s*[A-Za-z_]\w*(?:\[[^\]]*\])?\s*(?P<fix><=)", "=")
 
 
 def missing_default(code):
     # delete a one-line `default: ...;` from a case statement -> latch
-    return _sub_one(code, r"^[ \t]*default\s*:[^\n]*;[ \t]*\n", "")
+    return _sub_one(code, r"(?P<fix>^[ \t]*default\s*:[^\n]*;[ \t]*\n)", "")
 
 
 def width_off_by_one(code):
     # [7:0] -> [6:0]
-    def shrink(m):
-        return f"[{int(m.group(1)) - 1}:0]"
-    return _sub_one(code, r"\[([1-9]\d*)\s*:\s*0\]", shrink)
+    return _sub_one(code, r"\[(?P<fix>[1-9]\d*)\s*:\s*0\]", lambda m: str(int(m.group("fix")) - 1))
 
 
 def inverted_condition(code):
-    # if (en) -> if (!en)
-    return _sub_one(code, r"\bif\s*\(\s*([A-Za-z_]\w*)\s*\)", r"if (!\1)")
+    # if (en) -> if (!en)      (the empty group marks where the `!` goes)
+    return _sub_one(code, r"\bif\s*\(\s*(?P<fix>)[A-Za-z_]\w*\s*\)", "!")
 
 
 def reset_polarity(code):
     # negedge rst_n <-> posedge rst_n
     def flip(m):
-        edge = "posedge" if m.group(1) == "negedge" else "negedge"
-        return f"{edge} {m.group(2)}"
-    return _sub_one(code, r"\b(negedge|posedge)\s+(\w*(?:rst|reset)\w*)", flip, flags=re.M | re.I)
+        return "posedge" if m.group("fix") == "negedge" else "negedge"
+    return _sub_one(code, r"\b(?P<fix>negedge|posedge)\s+\w*(?:rst|reset)\w*", flip, flags=re.M | re.I)
 
 
 def wrong_operator(code):
     # a & b -> a | b,  a + b -> a - b  (inside assign statements)
     swaps = {"&": "|", "|": "&", "+": "-", "-": "+"}
-    def swap(m):
-        return f"{m.group(1)} {swaps[m.group(2)]} "
-    return _sub_one(code, r"(\bassign\b[^;\n]*?\w)\s*([&|+-])(?![&|=])\s*", swap)
+    return _sub_one(code, r"\bassign\b[^;\n]*?\w\s*(?P<fix>[&|+-])(?![&|=])", lambda m: swaps[m.group("fix")])
 
 
 INJECTORS = {
