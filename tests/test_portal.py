@@ -181,3 +181,12 @@ def test_the_model_does_not_see_instructions_hidden_in_the_file(monkeypatch):
     sent = json.loads(requests[0].data)["messages"][1]["content"]
     assert answer["filtered_lines"] == [1]
     assert "Ignore all previous" not in sent and "   8|     else if (en) cnt = cnt + 8'd1;" in sent
+
+
+def test_the_model_list_comes_from_the_api(monkeypatch):
+    requests = model_api(monkeypatch, [])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: (
+        requests.append(request), io.BytesIO(b'{"data": [{"id": "model-b"}, {"id": "model-a"}]}'))[1])
+    assert llm.get_llm().models() == ["model-a", "model-b"]
+    assert requests[0].full_url == "https://llm.example/v1/models" and requests[0].get_method() == "GET"
+

@@ -118,7 +118,7 @@ Choose a `.v` or `.sv` file (up to 100 kB) and ask about it. The chat runs the t
 | Can you visualize it as a gate-level schematic? | `render_schematic` | Schematic |
 | Can you fix the bug? | `repair_rtl` | Repair: the change, with buttons to use or download the repaired file |
 
-**The chat model.** Copy `.env.example` to `.env` and set `LLM_BASE_URL` (an OpenAI-compatible API, up to and including `/v1`), `LLM_API_KEY` and `LLM_MODEL`. The model must support tool calling. With no `LLM_BASE_URL` a stand-in answers: it picks the tools from keywords in the question and reports what they returned, so the portal runs end to end without a key, but it cannot explain anything.
+**The chat model.** Copy `.env.example` to `.env` and set `LLM_BASE_URL` (an OpenAI-compatible API: the address that `/chat/completions` is added to), `LLM_API_KEY` and `LLM_MODEL`. `python -m portal.llm` lists the model names the API offers. The model must support tool calling. With no `LLM_BASE_URL` a stand-in answers: it picks the tools from keywords in the question and reports what they returned, so the portal runs end to end without a key, but it cannot explain anything.
 
 **The repair model** is loaded on the first repair. It needs PyTorch and the adapter in `checkpoints/repair/`; without them the chat says so and the rest still works. On a CPU the first repair takes a few minutes.
 

@@ -3,9 +3,11 @@ The language model behind the chat.
 
 Settings come from the environment, or from a `.env` file in the repo root:
 
-    LLM_BASE_URL   an OpenAI-compatible API, up to and including /v1
+    LLM_BASE_URL   an OpenAI-compatible API: the address that /chat/completions is added to
     LLM_API_KEY    the key for it (never commit this)
-    LLM_MODEL      the model name to ask for
+    LLM_MODEL      the model to ask for, spelled as the API lists it
+
+    python -m portal.llm        # lists the models the API offers, to pick LLM_MODEL from
 
 Without LLM_BASE_URL the portal uses StandIn: a few fixed rules that pick the
 tools from keywords in the question. It runs the portal end to end with no
@@ -49,30 +51,45 @@ def get_llm():
 
 
 class ChatAPI:
-    """An OpenAI-compatible chat completions endpoint."""
+    """An OpenAI-compatible API: POST /chat/completions and GET /models."""
 
     def __init__(self, base_url, api_key, model):
-        self.url = base_url.rstrip("/") + "/chat/completions"
-        self.api_key, self.name = api_key, model
+        self.base, self.api_key, self.name = base_url.rstrip("/"), api_key, model
+
+    def _send(self, path, body=None):
+        """One request to the API. Returns the JSON it answers with."""
+        request = urllib.request.Request(self.base + path, method="POST" if body else "GET",
+                                         data=json.dumps(body).encode("utf-8") if body else None,
+                                         headers={"Content-Type": "application/json",
+                                                  "Authorization": f"Bearer {self.api_key}"})
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as e:
+            raise LLMError(f"the model API answered {e.code} {e.reason}") from e
+        except (urllib.error.URLError, TimeoutError) as e:
+            raise LLMError(f"the model API could not be reached: {getattr(e, 'reason', e)}") from e
+        except ValueError as e:
+            raise LLMError("the model API sent a reply the portal cannot read") from e
 
     def complete(self, messages, tools):
         body = {"model": self.name, "messages": messages}
         if tools:
             body["tools"] = tools
-        request = urllib.request.Request(self.url, data=json.dumps(body).encode("utf-8"), method="POST",
-                                         headers={"Content-Type": "application/json",
-                                                  "Authorization": f"Bearer {self.api_key}"})
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                message = json.load(response)["choices"][0]["message"]
-        except urllib.error.HTTPError as e:
-            raise LLMError(f"the model API answered {e.code} {e.reason}") from e
-        except (urllib.error.URLError, TimeoutError) as e:
-            raise LLMError(f"the model API could not be reached: {getattr(e, 'reason', e)}") from e
-        except (KeyError, IndexError, TypeError, ValueError) as e:
+            message = self._send("/chat/completions", body)["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as e:
             raise LLMError("the model API sent a reply the portal cannot read") from e
         return {"role": "assistant", "content": message.get("content") or "",
                 "tool_calls": message.get("tool_calls") or []}
+
+    def models(self):
+        """The model names the API offers: what LLM_MODEL can be set to."""
+        listing = self._send("/models")
+        try:
+            return sorted(m["id"] for m in (listing["data"] if isinstance(listing, dict) else listing))
+        except (KeyError, TypeError) as e:
+            raise LLMError("the model API sent a model list the portal cannot read") from e
 
 
 # ------------------------------------------------------------------ stand-in
@@ -165,3 +182,18 @@ class StandIn:
             return (f"The repair model changed the file for a {result['bug_type']} bug, and the result still "
                     "compiles. The Repair tab shows the change.")
         return f"No fix: {result['reason']}"
+
+
+if __name__ == "__main__":
+    llm = get_llm()
+    if isinstance(llm, StandIn):
+        raise SystemExit("LLM_BASE_URL is not set. Copy .env.example to .env and fill it in.")
+    try:
+        names = llm.models()
+    except LLMError as e:
+        raise SystemExit(f"Could not list the models at {llm.base}: {e}.")
+    print(f"Models offered by {llm.base} (LLM_MODEL has to be one of these, spelled exactly):")
+    for name in names:
+        print(f"  {name}" + ("    <- LLM_MODEL in your .env" if name == llm.name else ""))
+    if llm.name not in names:
+        print(f"LLM_MODEL is set to {llm.name!r}, which is not in the list." if llm.name else "LLM_MODEL is not set yet.")
