@@ -9,6 +9,8 @@ nbformat>=5.11
 
 # Models: install PyTorch first, with the CUDA command from https://pytorch.org
 # (a plain `pip install torch` may give you the CPU-only build)
-# transformers
-# peft
-# accelerate
+transformers>=5.22
+peft>=0.21
+
+# Tests
+pytest>=9.0
