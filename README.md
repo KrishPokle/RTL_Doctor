@@ -18,7 +18,7 @@ python make_dataset.py           # builds data/rtl_bugs.csv (a few minutes)
 
 The dataset is **not** in the repo. `make_dataset.py` rebuilds it, and its fixed random seed gives everyone the same 3,000 rows.
 
-Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build). On Ubuntu, `sudo apt install iverilog yosys` is enough for the repair model. The schematic also needs [netlistsvg](https://github.com/nturley/netlistsvg): `npm install -g netlistsvg` (it runs on Node.js).
+Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build). On Ubuntu, `sudo apt install iverilog yosys verilator` covers the repair model and the linter. The schematic also needs [netlistsvg](https://github.com/nturley/netlistsvg): `npm install -g netlistsvg` (it runs on Node.js).
 
 ## Files
 
@@ -27,7 +27,7 @@ Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https:/
 | `make_dataset.py` | Pulls Verilog from [shailja/Verilog_GitHub](https://huggingface.co/datasets/shailja/Verilog_GitHub) and injects one bug per module |
 | `rtl_dataset.ipynb` | Dataset overview: `df.head()`, bug-type plot, baseline |
 | `splits.py` | The train / val / test split that both models use |
-| `rtl_tools.py` | Icarus Verilog, Yosys and netlistsvg wrappers: does a module compile, do two modules behave the same, draw a module as a schematic |
+| `rtl_tools.py` | Icarus Verilog, Verilator, Yosys and netlistsvg wrappers: does a module compile, lint it, do two modules behave the same, draw it as a schematic |
 | `repair/prompt.py` | What the repair model reads and writes |
 | `repair/train.py` | LoRA fine-tune of deepseek-coder-1.3b-instruct |
 | `repair/evaluate.py` | Fix rate on the test split, next to the baseline |
@@ -96,6 +96,25 @@ One epoch on 1,657 train examples (`--epochs 1 --dropout 0`, LoRA rank 16, CPU, 
 - 96.9% of the answers could be applied to the module. Of the other seven, six name lines that are not in it and one ran past the length limit.
 - When a module has several identical `always @(posedge clk or negedge rst)` lines and one is flipped, the model sometimes flips another one instead of the odd one out.
 - The per-type numbers are on 6 to 24 modules each, so they move a lot from one module.
+
+## Lint
+
+`lint_rtl(code)` in `rtl_tools.py` runs Verilator's linter and returns a list of findings, each with `line`, `col`, `severity` (`warning` or `error`), `code` (Verilator's name for the check, such as `BLKSEQ`) and `message`. A clean module gives an empty list.
+
+```bash
+python rtl_tools.py design.v --lint
+```
+
+What it sees of the injected bugs, on 300 buggy modules from the dataset (counting only modules whose original lints without an error):
+
+| bug type | bugs that add a lint finding | Verilator check |
+|---|---|---|
+| blocking_in_seq | 21 of 29 | `BLKSEQ`, `BLKANDNBLK` |
+| missing_default | 17 of 26 | `CASEINCOMPLETE` |
+| wrong_operator | 9 of 25 | `SELRANGE`, `WIDTHEXPAND` |
+| width_off_by_one | 6 of 17 | `WIDTHTRUNC`, `WIDTHEXPAND` |
+| inverted_condition | 1 of 29 | |
+| reset_polarity | 0 of 36 | |
 
 ## Schematic
 

@@ -1,26 +1,30 @@
 """
-Verilog tool wrappers: Icarus Verilog (compile), Yosys (equivalence) and
-netlistsvg (schematic).
+Verilog tool wrappers: Icarus Verilog (compile), Verilator (lint), Yosys
+(equivalence) and netlistsvg (schematic).
 
 Every run happens in its own temporary directory with a timeout, and the
 Verilog under test is only ever passed to the tools as a file, never pasted
 into a command line or a tool script.
 
     compiles(code)                 -> (ok, log)
+    lint_rtl(code)                 -> list of warnings
     equivalent(original, patched)  -> (verdict, log)
     render_schematic(code, level)  -> (svg, log)
 
+    python rtl_tools.py design.v --lint        # prints the lint warnings
     python rtl_tools.py design.v               # writes design.svg (gate level)
     python rtl_tools.py design.v --level rtl   # adders, muxes and registers instead of single gates
 """
 import html
 import json
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 COMPILE_TIMEOUT = 10    # seconds
+LINT_TIMEOUT = 10
 SYNTH_TIMEOUT = 10
 EQUIV_TIMEOUT = 20
 DRAW_TIMEOUT = 30
@@ -57,6 +61,56 @@ def compiles(code):
             if ok:
                 return True, log
         return False, log
+
+
+# ------------------------------------------------------------------ lint
+# "%Warning-BLKSEQ: design.v:9:22: Blocking assignment '=' in sequential logic process"
+_FINDING = re.compile(r"%(Warning|Error)(?:-(\w+))?: (?:design\.v:(\d+):(\d+): )?(.*)")
+_NOISE = ("This may be because", "Exiting due to", "Cannot continue")       # they repeat the finding before them
+# the line under it:   ": ... Suggest using delayed assignment '<='"
+_HINT = re.compile(r"\s+: \.\.\. (?!note: In instance)(.*)")
+
+
+def _lint(code, language):
+    with tempfile.TemporaryDirectory(prefix="rtl_") as tmp:
+        Path(tmp, "design.v").write_text(code, encoding="utf-8")
+        # -Wno-fatal: keep going after a warning, so the later checks run too.
+        # The two checks that are switched off are about the file, not the design.
+        ok, log = _run(["verilator", "--lint-only", "-Wall", "-Wno-fatal", "-Wno-DECLFILENAME", "-Wno-EOFNEWLINE",
+                        "--timing", "--default-language", language, "design.v"], tmp, LINT_TIMEOUT)
+    found = []
+    for line in log.splitlines():
+        m = _FINDING.match(line)
+        if m and not m.group(5).startswith(_NOISE):
+            found.append({"line": int(m.group(3) or 0), "col": int(m.group(4) or 0), "severity": m.group(1).lower(),
+                          "code": m.group(2) or "", "message": m.group(5)})
+        elif found and _HINT.match(line):
+            found[-1]["message"] += "; " + _HINT.match(line).group(1)
+    if not ok and not found:                        # Verilator itself failed: timeout or crash
+        found.append({"line": 0, "col": 0, "severity": "error", "code": "",
+                      "message": (log.strip().splitlines() or ["verilator failed"])[-1]})
+    return sorted(found, key=lambda f: (f["line"], f["col"]))
+
+
+def lint_rtl(code):
+    """
+    Verilator's lint findings for the code, in line order. A clean module gives [].
+
+    Each finding is a dict: line, col, severity ("warning" or "error"), code
+    (Verilator's name for the check, such as BLKSEQ or WIDTHTRUNC; "" for a
+    plain error) and message. Line 0 means the finding is about the whole file.
+    """
+    best = None
+    # plain Verilog first: SystemVerilog mode rejects old code that uses
+    # words like `bit` or `logic` as signal names
+    for language in ("1364-2005", "1800-2017"):
+        found = _lint(code, language)
+        errors = sum(f["severity"] == "error" for f in found)
+        if best is None or errors < best[0]:
+            best = (errors, found)
+        if not errors:
+            break
+    return best[1]
 
 
 # ------------------------------------------------------------------ equivalence
@@ -180,12 +234,19 @@ def render_schematic(code, level="gate"):
 
 if __name__ == "__main__":
     import argparse
-    p = argparse.ArgumentParser(description="Draw a Verilog file as a schematic (SVG).")
+    p = argparse.ArgumentParser(description="Draw a Verilog file as a schematic (SVG), or lint it.")
     p.add_argument("file", type=Path)
+    p.add_argument("--lint", action="store_true", help="print the lint warnings instead of drawing")
     p.add_argument("--level", default="gate", choices=LEVELS)
     p.add_argument("-o", "--out", type=Path, help="default: the input file with .svg")
     args = p.parse_args()
-    svg, log = render_schematic(args.file.read_text(encoding="utf-8", errors="replace"), args.level)
+    source = args.file.read_text(encoding="utf-8", errors="replace")
+    if args.lint:
+        findings = lint_rtl(source)
+        for f in findings:
+            print(f"{args.file.name}:{f['line']}:{f['col']}: {f['severity']} {f['code']}".rstrip() + f": {f['message']}")
+        raise SystemExit(1 if findings else 0)
+    svg, log = render_schematic(source, args.level)
     if svg is None:
         raise SystemExit(f"no schematic: {log.strip()}")
     out = args.out or args.file.with_suffix(".svg")
