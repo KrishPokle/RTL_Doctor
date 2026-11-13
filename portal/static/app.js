@@ -84,7 +84,7 @@ function describeError(detail) {
 }
 
 // ------------------------------------------------------------------ the file
-function chooseFile(file) {
+async function chooseFile(file) {
   const name = file.name;
   if (!state.limits.file_types.some((type) => name.toLowerCase().endsWith(type))) {
     addMessage("error", `Only ${state.limits.file_types.join(" and ")} files are accepted.`);
@@ -94,7 +94,23 @@ function chooseFile(file) {
     addMessage("error", `${name} is ${file.size.toLocaleString()} bytes. The limit is ${state.limits.max_file_bytes.toLocaleString()}.`);
     return;
   }
-  file.text().then((code) => useFile(name, code, `${name} is loaded.`));
+  const code = await file.text();
+  const response = await fetch("api/file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, code }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    addMessage("error", describeError(data.detail));
+    return;
+  }
+  useFile(name, code, `${name} is loaded.`);
+  const lines = data.filtered_lines;
+  if (lines.length) {
+    addMessage("note", `${lines.length === 1 ? "Line" : "Lines"} ${lines.join(", ")} of the file ${lines.length === 1 ? "holds" : "hold"} `
+      + "text written to the assistant, not about the design. The assistant will not be shown it.");
+  }
 }
 
 function useFile(name, code, note) {

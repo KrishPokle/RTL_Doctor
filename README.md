@@ -35,6 +35,7 @@ Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https:/
 | `portal/app.py` | The web portal: `python -m portal.app` |
 | `portal/agent.py` | One chat turn: system prompt, the tools the model may call, the loop that runs them |
 | `portal/llm.py` | The chat model: any OpenAI-compatible API, or a built-in stand-in |
+| `portal/guardrails.py` | Input guardrails: which files are accepted, the prompt-injection filter, the topic check |
 | `portal/static/` | The page: chat on the left, dashboard on the right |
 | `tests/` | `python -m pytest tests` |
 | `docs/Project_M1_Proposal.pdf` | The M1 project proposal: models, tools, portal, guardrails, Nov 20 targets |
@@ -122,6 +123,19 @@ Choose a `.v` or `.sv` file (up to 100 kB) and ask about it. The chat runs the t
 **The repair model** is loaded on the first repair. It needs PyTorch and the adapter in `checkpoints/repair/`; without them the chat says so and the rest still works. On a CPU the first repair takes a few minutes.
 
 The tools always run on the uploaded file: the model cannot pass them other code. The page keeps the conversation and the file; the server stores nothing.
+
+### Guardrails
+
+| Guardrail in the proposal | Where | What it does |
+|---|---|---|
+| Accept only `.v`/`.sv` files, size limit | `guardrails.check_file` | Refuses other types, files over 100 kB, non-text, and a file that names an absolute path (`` `include "/etc/passwd"``), since the tools would open it. |
+| Refuse non-RTL questions | `guardrails.on_topic`, then the system prompt | A question passes if it uses hardware words, talks about the file, a bug or a fix, or is a short follow-up. Anything else is refused before the model sees it. |
+| Prompt-injection filter | `guardrails.filter_injection` | Comments and strings that read like instructions to the assistant are replaced in the copy the chat model reads, and the page says which lines. The tools still run on the file as uploaded. |
+| Sandbox and timeout on tool runs | `rtl_tools.py` | Every run gets a timeout and its own empty folder, eight folders deep, so a relative path (`../../x.v`) cannot leave it. This is not operating-system isolation: run the portal in a container if strangers can reach it. |
+| Never show a fix that does not compile | `repair.prompt.usable_patch` | See Repair model. |
+| User confirms before an email is sent | not built | There is no email step yet. |
+
+The three input rules are fixed patterns, so rephrasing can get past them; the model's own instructions are the second layer. On the 3,000 dataset modules, `check_file` refuses 11 (all name an absolute path) and the injection filter flags none.
 
 ## Lint
 

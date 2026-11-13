@@ -16,10 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from portal import agent
+from portal.guardrails import FILE_TYPES, MAX_FILE_BYTES, check_file, filter_injection
 from portal.llm import LLMError, get_llm
 
-FILE_TYPES = (".v", ".sv")
-MAX_FILE_BYTES = 100_000
 MAX_MESSAGES = 40               # turns of conversation sent along with a question
 MAX_MESSAGE_CHARS = 4000
 
@@ -41,21 +40,19 @@ class ChatRequest(BaseModel):
     file: SourceFile | None = None
 
 
-def check_file(file):
-    """Input guardrail: only Verilog source files of a sensible size."""
-    if not file.name.lower().endswith(FILE_TYPES):
-        raise HTTPException(400, f"Only {' and '.join(FILE_TYPES)} files are accepted.")
-    size = len(file.code.encode("utf-8"))
-    if size > MAX_FILE_BYTES:
-        raise HTTPException(400, f"The file is {size:,} bytes. The limit is {MAX_FILE_BYTES:,}.")
-    if not file.code.strip() or "\x00" in file.code:
-        raise HTTPException(400, "The file is empty or is not text.")
-
-
 @app.get("/api/status")
 def status():
     """What the page needs to know before the first question."""
     return {"model": get_llm().name, "file_types": FILE_TYPES, "max_file_bytes": MAX_FILE_BYTES}
+
+
+@app.post("/api/file")
+def accept_file(file: SourceFile):
+    """Check a file when it is chosen, so a refusal comes before the first question about it."""
+    refused = check_file(file.name, file.code)
+    if refused:
+        raise HTTPException(400, refused)
+    return {"filtered_lines": filter_injection(file.code)[1]}
 
 
 @app.post("/api/chat")
@@ -63,7 +60,9 @@ def chat(request: ChatRequest):
     if request.messages[-1].role != "user":
         raise HTTPException(400, "The last message has to be the user's question.")
     if request.file:
-        check_file(request.file)
+        refused = check_file(request.file.name, request.file.code)
+        if refused:
+            raise HTTPException(400, refused)
     try:
         return agent.answer([m.model_dump() for m in request.messages],
                             request.file.model_dump() if request.file else None, get_llm())
