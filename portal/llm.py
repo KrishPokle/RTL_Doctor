@@ -117,6 +117,9 @@ class StandIn:
                 results[m["tool_call_id"].removeprefix("standin_")] = json.loads(m["content"])
         if not tools:
             return _say("Choose a Verilog file first. Then I can check it for bugs, draw its schematic or try a fix.")
+        error = next((r["error"] for r in results.values() if "error" in r), None)
+        if error:                                       # a tool could not run: say why, and stop
+            return _say(_sentence(error))
 
         if WANTS_FIX.search(question):
             if "lint_rtl" not in results:

@@ -106,6 +106,14 @@ def test_a_missing_repair_model_is_said_plainly(monkeypatch, tmp_path):
     assert result["fixed"] is False and "not installed" in result["reason"]
 
 
+@pytest.mark.parametrize("question", ["Can you detect any bugs in my design?", "Can you fix the bug?",
+                                      "Can you visualize it as a gate-level schematic?"])
+def test_a_missing_verilog_tool_is_said_plainly_instead_of_failing(monkeypatch, tmp_path, question):
+    monkeypatch.setenv("PATH", str(tmp_path))                     # no verilator, yosys or netlistsvg
+    response = ask(question)
+    assert response.status_code == 200 and "not installed" in response.json()["reply"]
+
+
 @pytest.mark.parametrize("name, arguments", [("format_disk", "{}"), ("render_schematic", '{"level": "pcb"}'),
                                              ("repair_rtl", '{"bug_type": "typo"}'), ("lint_rtl", "not json")])
 def test_a_bad_tool_call_gets_an_error_back_instead_of_running(name, arguments):

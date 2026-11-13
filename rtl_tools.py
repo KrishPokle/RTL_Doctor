@@ -53,13 +53,15 @@ def _workdir():
 
 
 def _run(cmd, cwd, timeout):
-    """Run a tool. Returns (ok, output); a timeout counts as a failure."""
+    """Run a tool. Returns (ok, output); a timeout or a missing tool counts as a failure."""
     try:
         p = subprocess.run(cmd, cwd=cwd, timeout=timeout, text=True, errors="replace",
                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return p.returncode == 0, p.stdout
     except subprocess.TimeoutExpired:
         return False, f"{TIMED_OUT} after {timeout}s"
+    except FileNotFoundError:
+        return False, f"{cmd[0]} is not installed (or not on PATH)"
 
 
 # ------------------------------------------------------------------ compile
