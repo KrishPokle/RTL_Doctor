@@ -32,6 +32,9 @@ Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https:/
 | `repair/train.py` | LoRA fine-tune of deepseek-coder-1.3b-instruct |
 | `repair/evaluate.py` | Fix rate on the test split, next to the baseline |
 | `repair/model.py` | Loads the model and adapter; `repair_rtl(model, tok, code, bug_type)` |
+| `detect/model.py` | Bug detector; `detect_bugs(model, tok, code)` |
+| `detect/train.py` | Fine-tune of the CodeT5+ 220M encoder |
+| `detect/evaluate.py` | Macro-F1 on the test split, next to two baselines |
 | `tests/` | `python -m pytest tests` |
 | `docs/Project_M1_Proposal.pdf` | The M1 project proposal: models, tools, portal, guardrails, Nov 20 targets |
 
@@ -60,6 +63,48 @@ from splits import add_split
 df = add_split(pd.read_csv("data/rtl_bugs.csv"))
 test = df[df.split == "test"]
 ```
+
+## Bug detector
+
+The CodeT5+ 220M encoder, mean-pooled, with a linear head over 7 classes: the six bug types and `none` (clean). A module longer than 512 tokens is cut into overlapping windows; the window least sure the module is clean gives the answer, so a bug deep in a long module is still seen. In training, a long module is cut to the window that holds its bug line, so the label always matches what the model reads.
+
+```bash
+python -m detect.train                    # 3 epochs on the train split, keeps the best val macro-F1
+python -m detect.evaluate                 # macro-F1 on the test split, next to the baselines
+python -m detect.evaluate --no-model      # baselines only
+```
+
+```python
+from detect.model import load_detector, detect_bugs
+model, tok = load_detector()              # checkpoints/detect
+detect_bugs(model, tok, code)             # {'label': 'buggy', 'bug_type': 'reset_polarity', 'confidence': 0.97, ...}
+```
+
+**Metric**: macro-F1 over the 7 classes, so each bug type counts the same. **Baselines**: always predict the most common class, and TF-IDF of character 3-5-grams with logistic regression.
+
+### First run (Nov 13)
+
+3 epochs on 2,394 train modules (encoder lr 3e-5, head lr 1e-3, batch 8, CPU, 267 minutes). Val macro-F1 by epoch: 0.504, 0.680, 0.726. Scored on the test split: 315 modules.
+
+| model | macro-F1 | accuracy | clean/buggy F1 |
+|---|---|---|---|
+| majority class | 0.062 | 27.9% | 0.000 |
+| TF-IDF + logistic regression | 0.621 | 61.3% | 0.868 |
+| **CodeT5+ 220M** | **0.718** | **70.5%** | **0.896** |
+
+| class | test modules | TF-IDF F1 | CodeT5+ F1 |
+|---|---|---|---|
+| none (clean) | 88 | 0.613 | 0.569 |
+| blocking_in_seq | 46 | 0.548 | 0.685 |
+| missing_default | 23 | 0.727 | 0.667 |
+| width_off_by_one | 45 | 0.592 | 0.621 |
+| inverted_condition | 38 | 0.612 | 0.875 |
+| reset_polarity | 35 | 0.640 | 0.778 |
+| wrong_operator | 40 | 0.619 | 0.828 |
+
+- When the detector calls a module clean it is always right (precision 1.00), but it calls only 40% of the clean modules clean. The other 60% get a bug type, so it errs toward flagging. Part of this comes from taking the most suspicious window of a long module.
+- Val macro-F1 was still rising at epoch 3, so more epochs may help.
+- The per-type numbers are on 23 to 46 modules each.
 
 ## Repair model
 
