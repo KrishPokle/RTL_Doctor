@@ -12,5 +12,10 @@ nbformat>=5.11
 transformers>=5.22
 peft>=0.21
 
+# Portal
+fastapi>=0.162
+uvicorn>=0.54
+
 # Tests
 pytest>=9.0
+httpx>=0.28

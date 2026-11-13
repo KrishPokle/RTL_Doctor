@@ -15,6 +15,7 @@ into a command line or a tool script.
     python rtl_tools.py design.v               # writes design.svg (gate level)
     python rtl_tools.py design.v --level rtl   # adders, muxes and registers instead of single gates
 """
+import contextlib
 import html
 import json
 import re
@@ -29,6 +30,7 @@ SYNTH_TIMEOUT = 10
 EQUIV_TIMEOUT = 20
 DRAW_TIMEOUT = 30
 MAX_CELLS = 500         # a schematic with more cells than this is not readable
+NESTING = 8             # folders between a tool's working folder and the outside
 TIMED_OUT = "timeout"
 
 # verdicts returned by equivalent()
@@ -36,6 +38,18 @@ EQUIVALENT = "equivalent"            # proven to behave like the original
 DIFFERENT = "different"              # patched design synthesizes, but equivalence is not proven
 PATCH_ERROR = "patch_error"          # patched design does not synthesize
 UNCHECKABLE = "uncheckable"          # the ORIGINAL cannot be checked (not synthesizable, no outputs, too big)
+
+
+@contextlib.contextmanager
+def _workdir():
+    """
+    A private, empty folder for one tool run. It sits NESTING folders deep, so a
+    relative path in the code (`include "../../x.v"`) cannot climb out of it.
+    """
+    with tempfile.TemporaryDirectory(prefix="rtl_") as tmp:
+        work = Path(tmp, *["d"] * NESTING)
+        work.mkdir(parents=True)
+        yield work
 
 
 def _run(cmd, cwd, timeout):
@@ -51,7 +65,7 @@ def _run(cmd, cwd, timeout):
 # ------------------------------------------------------------------ compile
 def compiles(code):
     """Does the module compile and elaborate on its own with Icarus Verilog?"""
-    with tempfile.TemporaryDirectory(prefix="rtl_") as tmp:
+    with _workdir() as tmp:
         Path(tmp, "design.v").write_text(code, encoding="utf-8")
         log = ""
         # plain Verilog first: SystemVerilog mode rejects old code that uses
@@ -72,7 +86,7 @@ _HINT = re.compile(r"\s+: \.\.\. (?!note: In instance)(.*)")
 
 
 def _lint(code, language):
-    with tempfile.TemporaryDirectory(prefix="rtl_") as tmp:
+    with _workdir() as tmp:
         Path(tmp, "design.v").write_text(code, encoding="utf-8")
         # -Wno-fatal: keep going after a warning, so the later checks run too.
         # The two checks that are switched off are about the file, not the design.
@@ -161,7 +175,7 @@ def equivalent(original, patched):
     for combinational logic and, for registers, holds for every clock cycle.
     It is conservative: a patch counts as a fix only when the proof succeeds.
     """
-    with tempfile.TemporaryDirectory(prefix="rtl_") as tmp:
+    with _workdir() as tmp:
         ok, log = _yosys(original, _SYNTH, tmp, name="gold")
         if not ok:
             return UNCHECKABLE, log
@@ -215,7 +229,7 @@ def render_schematic(code, level="gate"):
     netlistsvg = shutil.which("netlistsvg")         # an npm script: needs its full path on Windows
     if not netlistsvg:
         return None, "netlistsvg is not installed (npm install -g netlistsvg)"
-    with tempfile.TemporaryDirectory(prefix="rtl_") as tmp:
+    with _workdir() as tmp:
         ok, log = _yosys(code, _NETLIST, tmp, passes=LEVELS[level])
         if not ok:
             return None, log
@@ -229,7 +243,11 @@ def render_schematic(code, level="gate"):
         if not ok:                                  # netlistsvg prints a long stack trace: keep the error line
             error = next((line for line in log.splitlines() if "Error" in line), log)
             return None, f"netlistsvg could not draw this design: {error.strip()}"
-        return Path(tmp, "schematic.svg").read_text(encoding="utf-8"), log
+        svg = Path(tmp, "schematic.svg").read_text(encoding="utf-8")
+        # netlistsvg gives the drawing a fixed size; with a viewBox it scales to the size it is shown at
+        svg = re.sub(r'<svg ([^>]*?)width="([\d.]+)" height="([\d.]+)"',
+                     r'<svg \1width="\2" height="\3" viewBox="0 0 \2 \3"', svg, count=1)
+        return svg, log
 
 
 if __name__ == "__main__":
