@@ -95,7 +95,7 @@ One epoch on 1,657 train examples (`--epochs 1 --dropout 0`, LoRA rank 16, CPU, 
 | **all** | **90** | **74.4%** | **34.4%** | **64.8% of 227** |
 
 - The baseline is high for `blocking_in_seq` and `missing_default` because Yosys compares synthesized hardware: `=` and `<=` usually synthesize to the same circuit, and so does a full `case` without its `default`. For these two, `exact` says more than fix rate.
-- The model's first answer was usable for 213 of the 227 modules. The second try found a usable fix for 8 more, and 6 stay unchanged. With the first answer alone (`--beams 1`, and counting an unusable answer as a failure) the fix rate is 70.0%.
+- The model's first answer was usable for 213 of the 227 modules. The second try found a usable fix for 8 more, and 6 stay unchanged. Before the compile check and the second try were added, the same adapter scored 70.0%.
 - When a module has several identical `always @(posedge clk or negedge rst)` lines and one is flipped, the model sometimes flips another one instead of the odd one out.
 - The per-type numbers are on 6 to 24 modules each, so they move a lot from one module.
 
