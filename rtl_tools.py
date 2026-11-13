@@ -229,7 +229,11 @@ def render_schematic(code, level="gate"):
         if not ok:                                  # netlistsvg prints a long stack trace: keep the error line
             error = next((line for line in log.splitlines() if "Error" in line), log)
             return None, f"netlistsvg could not draw this design: {error.strip()}"
-        return Path(tmp, "schematic.svg").read_text(encoding="utf-8"), log
+        svg = Path(tmp, "schematic.svg").read_text(encoding="utf-8")
+        # netlistsvg gives the drawing a fixed size; with a viewBox it scales to the size it is shown at
+        svg = re.sub(r'<svg ([^>]*?)width="([\d.]+)" height="([\d.]+)"',
+                     r'<svg \1width="\2" height="\3" viewBox="0 0 \2 \3"', svg, count=1)
+        return svg, log
 
 
 if __name__ == "__main__":

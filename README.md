@@ -32,6 +32,10 @@ Verilog tools (iverilog, Yosys, Verilator) come from the [OSS CAD Suite](https:/
 | `repair/train.py` | LoRA fine-tune of deepseek-coder-1.3b-instruct |
 | `repair/evaluate.py` | Fix rate on the test split, next to the baseline |
 | `repair/model.py` | Loads the model and adapter; `repair_rtl(model, tok, code, bug_type)` |
+| `portal/app.py` | The web portal: `python -m portal.app` |
+| `portal/agent.py` | One chat turn: system prompt, the tools the model may call, the loop that runs them |
+| `portal/llm.py` | The chat model: any OpenAI-compatible API, or a built-in stand-in |
+| `portal/static/` | The page: chat on the left, dashboard on the right |
 | `tests/` | `python -m pytest tests` |
 | `docs/Project_M1_Proposal.pdf` | The M1 project proposal: models, tools, portal, guardrails, Nov 20 targets |
 
@@ -98,6 +102,26 @@ One epoch on 1,657 train examples (`--epochs 1 --dropout 0`, LoRA rank 16, CPU, 
 - The model's first answer was usable for 213 of the 227 modules. The second try found a usable fix for 8 more, and 6 stay unchanged. Before the compile check and the second try were added, the same adapter scored 70.0%.
 - When a module has several identical `always @(posedge clk or negedge rst)` lines and one is flipped, the model sometimes flips another one instead of the odd one out.
 - The per-type numbers are on 6 to 24 modules each, so they move a lot from one module.
+
+## Portal
+
+```bash
+python -m portal.app        # then open http://127.0.0.1:8000
+```
+
+Choose a `.v` or `.sv` file (up to 100 kB) and ask about it. The chat runs the tools and the dashboard shows what they return:
+
+| Question | Tool | Dashboard tab |
+|---|---|---|
+| Can you detect any bugs in my design? | `lint_rtl` (the CodeT5+ detector will join it) | Findings: flagged source lines, findings by check |
+| Can you visualize it as a gate-level schematic? | `render_schematic` | Schematic |
+| Can you fix the bug? | `repair_rtl` | Repair: the change, with buttons to use or download the repaired file |
+
+**The chat model.** Copy `.env.example` to `.env` and set `LLM_BASE_URL` (an OpenAI-compatible API, up to and including `/v1`), `LLM_API_KEY` and `LLM_MODEL`. The model must support tool calling. With no `LLM_BASE_URL` a stand-in answers: it picks the tools from keywords in the question and reports what they returned, so the portal runs end to end without a key, but it cannot explain anything.
+
+**The repair model** is loaded on the first repair. It needs PyTorch and the adapter in `checkpoints/repair/`; without them the chat says so and the rest still works. On a CPU the first repair takes a few minutes.
+
+The tools always run on the uploaded file: the model cannot pass them other code. The page keeps the conversation and the file; the server stores nothing.
 
 ## Lint
 
