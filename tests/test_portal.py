@@ -106,6 +106,14 @@ def test_a_missing_repair_model_is_said_plainly(monkeypatch, tmp_path):
     assert result["fixed"] is False and "not installed" in result["reason"]
 
 
+@pytest.mark.parametrize("question", ["Can you detect any bugs in my design?", "Can you fix the bug?",
+                                      "Can you visualize it as a gate-level schematic?"])
+def test_a_missing_verilog_tool_is_said_plainly_instead_of_failing(monkeypatch, tmp_path, question):
+    monkeypatch.setenv("PATH", str(tmp_path))                     # no verilator, yosys or netlistsvg
+    response = ask(question)
+    assert response.status_code == 200 and "not installed" in response.json()["reply"]
+
+
 @pytest.mark.parametrize("name, arguments", [("format_disk", "{}"), ("render_schematic", '{"level": "pcb"}'),
                                              ("repair_rtl", '{"bug_type": "typo"}'), ("lint_rtl", "not json")])
 def test_a_bad_tool_call_gets_an_error_back_instead_of_running(name, arguments):
@@ -141,6 +149,7 @@ def test_a_model_gets_the_file_and_the_results_of_the_tools_it_calls(monkeypatch
     first, second = (json.loads(r.data) for r in requests)
     assert requests[0].full_url == "https://llm.example/v1/chat/completions"
     assert requests[0].get_header("Authorization") == "Bearer secret-key" and first["model"] == "some-model"
+    assert first["stream"] is False and requests[0].get_header("User-agent") == "rtl-doctor-portal"
     assert [t["function"]["name"] for t in first["tools"]] == ["lint_rtl", "render_schematic", "repair_rtl"]
     assert "   7|     else if (en) cnt = cnt + 8'd1;" in first["messages"][1]["content"]     # the numbered file
     tool_result = second["messages"][-1]

@@ -12,6 +12,7 @@ comments (portal/guardrails.py).
 import difflib
 import json
 import secrets
+import shutil
 import threading
 from pathlib import Path
 
@@ -105,6 +106,8 @@ def run_tool(name, arguments, file, out):
     code = normalize(file["code"])
 
     if name == "lint_rtl":
+        if not shutil.which("verilator"):           # otherwise "not installed" would be listed as a finding
+            return {"error": "Verilator is not installed (or not on PATH), so the linter cannot run"}
         findings = rtl_tools.lint_rtl(code)
         out["findings"] = findings
         return {"total": len(findings), "findings": findings[:MAX_FINDINGS]}

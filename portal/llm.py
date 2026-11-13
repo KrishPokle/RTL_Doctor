@@ -56,12 +56,15 @@ class ChatAPI:
         self.api_key, self.name = api_key, model
 
     def complete(self, messages, tools):
-        body = {"model": self.name, "messages": messages}
+        # stream=False: some gateways (TAMU AI) stream by default, and this reads one JSON reply
+        body = {"model": self.name, "messages": messages, "stream": False}
         if tools:
             body["tools"] = tools
+        # a User-Agent of our own: some gateways refuse urllib's default one with 403 Forbidden
         request = urllib.request.Request(self.url, data=json.dumps(body).encode("utf-8"), method="POST",
                                          headers={"Content-Type": "application/json",
-                                                  "Authorization": f"Bearer {self.api_key}"})
+                                                  "Authorization": f"Bearer {self.api_key}",
+                                                  "User-Agent": "rtl-doctor-portal"})
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
                 message = json.load(response)["choices"][0]["message"]
@@ -114,6 +117,9 @@ class StandIn:
                 results[m["tool_call_id"].removeprefix("standin_")] = json.loads(m["content"])
         if not tools:
             return _say("Choose a Verilog file first. Then I can check it for bugs, draw its schematic or try a fix.")
+        error = next((r["error"] for r in results.values() if "error" in r), None)
+        if error:                                       # a tool could not run: say why, and stop
+            return _say(_sentence(error))
 
         if WANTS_FIX.search(question):
             if "lint_rtl" not in results:
