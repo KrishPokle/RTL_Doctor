@@ -73,7 +73,7 @@ class ChatAPI:
             raise LLMError("the model API sent a reply the portal cannot read") from e
 
     def complete(self, messages, tools):
-        body = {"model": self.name, "messages": messages}
+        body = {"model": self.name, "messages": messages, "stream": False}     # one whole reply, not a stream
         if tools:
             body["tools"] = tools
         try:
