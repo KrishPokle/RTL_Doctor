@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTL Doctor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="bench">
+
+    <section class="board" aria-label="Chat">
+      <header class="board-head">
+        <h1>RTL Doctor</h1>
+        <p class="tagline">Finds, explains and repairs bugs in Verilog designs.</p>
+        <div class="file-row">
+          <span id="file-name" class="file-name">No file chosen</span>
+          <button id="choose-file" class="btn btn-silk" type="button">Choose a Verilog file</button>
+          <input id="file-input" type="file" accept=".v,.sv" hidden>
+        </div>
+        <p id="model-note" class="model-note" hidden></p>
+      </header>
+
+      <div id="log" class="log" aria-live="polite"></div>
+
+      <div id="starters" class="starters" hidden>
+        <button class="btn btn-silk" type="button">Check this design for bugs</button>
+        <button class="btn btn-silk" type="button">Draw the gate-level schematic</button>
+        <button class="btn btn-silk" type="button">Fix the bug</button>
+      </div>
+
+      <form id="composer" class="composer">
+        <label class="visually-hidden" for="question">Your question</label>
+        <textarea id="question" rows="2" placeholder="Ask about your design" maxlength="4000"></textarea>
+        <button id="send" class="btn btn-gold" type="submit">Send</button>
+      </form>
+    </section>
+
+    <section class="sheet" aria-label="Dashboard">
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-findings" aria-controls="panel-findings" aria-selected="true">Findings <span id="findings-count" class="count" hidden></span></button>
+        <button role="tab" id="tab-schematic" aria-controls="panel-schematic" aria-selected="false">Schematic</button>
+        <button role="tab" id="tab-repair" aria-controls="panel-repair" aria-selected="false">Repair</button>
+      </div>
+
+      <div id="panel-findings" class="panel" role="tabpanel" aria-labelledby="tab-findings">
+        <p id="findings-empty" class="empty">Choose a Verilog file to see its source here. Ask for a bug check to mark the lines the linter flags.</p>
+        <div id="findings-body" class="findings-body" hidden>
+          <ol id="source" class="source"></ol>
+          <aside class="summary">
+            <p id="summary-note" class="summary-note">Ask for a bug check to see the findings.</p>
+            <div id="chart" class="chart"></div>
+            <ul id="finding-list" class="finding-list"></ul>
+          </aside>
+        </div>
+      </div>
+
+      <div id="panel-schematic" class="panel" role="tabpanel" aria-labelledby="tab-schematic" hidden>
+        <p id="schematic-empty" class="empty">No schematic yet. Ask for one in the chat.</p>
+        <div id="schematic-body" hidden>
+          <div class="viewer-bar">
+            <span id="schematic-level"></span>
+            <span class="zoom">
+              <button id="zoom-out" class="btn btn-ink" type="button" aria-label="Zoom out">&minus;</button>
+              <button id="zoom-fit" class="btn btn-ink" type="button">Fit</button>
+              <button id="zoom-in" class="btn btn-ink" type="button" aria-label="Zoom in">+</button>
+            </span>
+          </div>
+          <div id="viewer" class="viewer"><img id="schematic-img" alt="Schematic of the design"></div>
+        </div>
+      </div>
+
+      <div id="panel-repair" class="panel" role="tabpanel" aria-labelledby="tab-repair" hidden>
+        <p id="repair-empty" class="empty">No repair yet. Ask the chat to fix a bug.</p>
+        <div id="repair-body" hidden>
+          <div class="viewer-bar">
+            <span id="repair-title"></span>
+            <span class="zoom">
+              <button id="use-repair" class="btn btn-ink" type="button">Use the repaired file</button>
+              <button id="download-repair" class="btn btn-ink" type="button">Download it</button>
+            </span>
+          </div>
+          <pre id="diff" class="diff"></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
