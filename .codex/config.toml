@@ -1,0 +1,3 @@
+# Project Codex settings for RTL Doctor. No MCP servers.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
