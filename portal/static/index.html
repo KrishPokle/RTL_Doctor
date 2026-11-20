@@ -48,6 +48,12 @@
         <div id="findings-body" class="findings-body" hidden>
           <ol id="source" class="source"></ol>
           <aside class="summary">
+            <div id="detector" hidden>
+              <h2 class="summary-head">Bug detector (CodeT5+)</h2>
+              <p id="detector-note" class="summary-note"></p>
+              <div id="detector-chart" class="chart"></div>
+            </div>
+            <h2 class="summary-head">Linter (Verilator)</h2>
             <p id="summary-note" class="summary-note">Ask for a bug check to see the findings.</p>
             <div id="chart" class="chart"></div>
             <ul id="finding-list" class="finding-list"></ul>
