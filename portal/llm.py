@@ -117,19 +117,22 @@ class StandIn:
                 results[m["tool_call_id"].removeprefix("standin_")] = json.loads(m["content"])
         if not tools:
             return _say("Choose a Verilog file first. Then I can check it for bugs, draw its schematic or try a fix.")
-        error = next((r["error"] for r in results.values() if "error" in r), None)
-        if error:                                       # a tool could not run: say why, and stop
-            return _say(_sentence(error))
 
         if WANTS_FIX.search(question):
-            if "lint_rtl" not in results:
-                return _call("lint_rtl")                # the lint findings say which bug type to repair
+            if "detect_bugs" not in results:
+                return _call("detect_bugs")             # the detector says which bug type to repair
             if "repair_rtl" not in results:
-                bug = next((BUG_OF_CHECK[f["code"]] for f in results["lint_rtl"]["findings"]
-                            if f["code"] in BUG_OF_CHECK), None)
-                if bug is None:
-                    return _say(self._lint_text(results["lint_rtl"]) + " None of the findings points at a bug type "
-                                "the repair model knows, so I did not try a fix.")
+                bug = self._detected_bug(results["detect_bugs"])
+                if bug is None:                         # no verdict from the detector: ask the linter
+                    if "lint_rtl" not in results:
+                        return _call("lint_rtl")
+                    lint = results["lint_rtl"]
+                    bug = next((BUG_OF_CHECK[f["code"]] for f in lint.get("findings", [])
+                                if f["code"] in BUG_OF_CHECK), None)
+                    if bug is None:
+                        return _say(self._detect_text(results["detect_bugs"]) + " " + self._lint_text(lint)
+                                    + (" None of the findings points at a bug type the repair model knows, "
+                                       "so I did not try a fix." if "error" not in lint else ""))
                 return _call("repair_rtl", bug_type=bug)
             return _say(self._repair_text(results["repair_rtl"]))
         if WANTS_SCHEMATIC.search(question):
@@ -137,14 +140,32 @@ class StandIn:
                 return _call("render_schematic", level="rtl" if WANTS_BLOCKS.search(question) else "gate")
             return _say(self._schematic_text(results["render_schematic"]))
         if WANTS_CHECK.search(question):
-            if "lint_rtl" not in results:
-                return _call("lint_rtl")
-            return _say(self._lint_text(results["lint_rtl"]))
+            for tool in ("detect_bugs", "lint_rtl"):
+                if tool not in results:
+                    return _call(tool)
+            return _say(self._detect_text(results["detect_bugs"]) + " " + self._lint_text(results["lint_rtl"]))
         return _say("No language model is connected, so I can only run the tools. "
                     "Ask me to check the file for bugs, draw the schematic, or fix a bug.")
 
     @staticmethod
+    def _detected_bug(result):
+        """The bug type the detector found, or None when it did not run or found the module clean."""
+        return result["bug_type"] if result.get("ran") and result["label"] == "buggy" else None
+
+    @staticmethod
+    def _detect_text(result):
+        if not result.get("ran"):
+            return _sentence("The bug detector did not run: " + result.get("reason", "unknown reason"))
+        sure = f"{result['confidence']:.0%} sure"
+        if result["label"] == "clean":
+            return f"The bug detector (CodeT5+) finds no bug ({sure})."
+        return (f"The bug detector (CodeT5+) finds a {result['bug_type'].replace('_', ' ')} bug ({sure}). "
+                "Its confidence for each bug type is charted in the Findings tab.")
+
+    @staticmethod
     def _lint_text(result):
+        if "error" in result:
+            return _sentence(result["error"])
         total = result["total"]
         if not total:
             return "The linter found nothing wrong with this file."
@@ -160,6 +181,8 @@ class StandIn:
 
     @staticmethod
     def _schematic_text(result):
+        if "error" in result:
+            return _sentence(result["error"])
         if result["drawn"]:
             level = "gate by gate" if result["level"] == "gate" else "as blocks"
             return f"The schematic is drawn {level} in the Schematic tab."
@@ -167,6 +190,8 @@ class StandIn:
 
     @staticmethod
     def _repair_text(result):
+        if "error" in result:
+            return _sentence(result["error"])
         if result["fixed"]:
             return (f"The repair model changed the file for a {result['bug_type']} bug, and the result still "
                     "compiles. The Repair tab shows the change.")
