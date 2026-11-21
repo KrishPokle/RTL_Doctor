@@ -125,6 +125,10 @@ button, textarea { font: inherit; color: inherit; }
 .chart .bar { height: 12px; border-radius: 2px; background: var(--warn); min-width: 4px; }
 .chart .bar.error { background: var(--error); }
 .chart .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart .bar.model { background: var(--sheet-edge); }
+.chart .bar.model.top { background: var(--mask); }
+.summary-head { margin: 0 0 6px; font: 600 15px/1.2 var(--label); color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+.ran code { font: 400 12px var(--code); }
 .finding-list { list-style: none; margin: 0; padding: 0; }
 .finding-list button {
   display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--sheet-edge);

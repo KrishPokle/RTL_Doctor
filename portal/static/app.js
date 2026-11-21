@@ -20,11 +20,12 @@ const state = {
 };
 
 const RAN = {                   // what each tool did, in the user's words
+  detect_bugs: "Ran the bug detector",
   lint_rtl: "Checked with the linter",
   render_schematic: "Drew the schematic",
   repair_rtl: "Asked the repair model",
 };
-const TAB_OF_TOOL = { lint_rtl: "findings", render_schematic: "schematic", repair_rtl: "repair" };
+const TAB_OF_TOOL = { detect_bugs: "findings", lint_rtl: "findings", render_schematic: "schematic", repair_rtl: "repair" };
 const MAX_HISTORY = 40;
 
 // ------------------------------------------------------------------ chat
@@ -58,11 +59,17 @@ async function ask(text) {
     reply.textContent = "";
     if (data.tools.length) {
       const ran = el("div", "ran");
-      for (const tool of new Set(data.tools)) ran.append(el("span", "", RAN[tool] || tool));
+      for (const tool of new Set(data.tools)) {     // the tool's own name too, so the call is plain to see
+        const chip = el("span", "", RAN[tool] || tool);
+        if (RAN[tool]) chip.append(el("code", "", tool));
+        ran.append(chip);
+      }
       reply.append(ran);
     }
     reply.append(document.createTextNode(data.reply));
+    if (data.detection) showDetection(data.detection);
     if (data.findings) showFindings(data.findings);
+    else if (data.tools.includes("lint_rtl")) $("summary-note").textContent = "The linter did not run. The chat says why.";
     if (data.schematic) showSchematic(data.schematic);
     if (data.repair) showRepair(data.repair);
     const shown = data.tools.map((tool) => TAB_OF_TOOL[tool]).filter(Boolean).pop();
@@ -129,6 +136,8 @@ function useFile(name, code, note) {
   $("summary-note").textContent = "Ask for a bug check to see the findings.";
   $("chart").replaceChildren();
   $("finding-list").replaceChildren();
+  $("detector").hidden = true;
+  $("detector-chart").replaceChildren();
   $("schematic-body").hidden = true;
   $("schematic-empty").hidden = false;
   $("repair-body").hidden = true;
@@ -144,6 +153,26 @@ function selectTab(name) {
     $(tab.getAttribute("aria-controls")).hidden = !on;
   }
   if (name === "schematic") fitSchematic();
+}
+
+const bugName = (type) => (type === "none" ? "no bug" : type.replaceAll("_", " "));
+
+function showDetection(detection) {
+  // the detector's confidence for every class, most likely first; its answer drawn in the board's green
+  const percent = (p) => `${Math.round(100 * p)}%`;
+  const chart = [];
+  for (const [type, p] of Object.entries(detection.probs).sort((a, b) => b[1] - a[1])) {
+    const bar = el("span", "bar model" + (type === detection.bug_type ? " top" : ""));
+    bar.style.width = `${100 * p}%`;
+    chart.push(el("span", "check", bugName(type)), bar, el("span", "n", percent(p)));
+  }
+  $("detector-chart").replaceChildren(...chart);
+  const [first, last] = detection.window_lines;
+  $("detector-note").textContent = (detection.label === "clean"
+    ? `No bug found, ${percent(detection.confidence)} sure`
+    : `A ${bugName(detection.bug_type)} bug, ${percent(detection.confidence)} sure`)
+    + ` (read lines ${first} to ${last}). Confidence for each bug type:`;
+  $("detector").hidden = false;
 }
 
 function showFindings(findings) {

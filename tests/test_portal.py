@@ -39,10 +39,21 @@ FIXED = BUGGY.replace("cnt = cnt", "cnt <= cnt")
 
 
 @pytest.fixture(autouse=True)
-def no_model(monkeypatch):
-    """Use the stand-in, whatever the developer's own .env says."""
+def no_model(monkeypatch, tmp_path):
+    """Use the stand-in and no trained detector, whatever the developer's own .env and checkpoints hold."""
     monkeypatch.setattr(llm, "load_env", lambda: None)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.setattr(agent, "DETECTOR", tmp_path / "no_detector")
+
+
+def fake_detector(monkeypatch, bug_type):
+    """A detector that finds this bug type (or "none") in any file, 90% sure."""
+    labels = ["none", "blocking_in_seq", "missing_default", "width_off_by_one",       # detect/model.py LABELS
+              "inverted_condition", "reset_polarity", "wrong_operator"]
+    probs = {label: 0.9 if label == bug_type else round(0.1 / 6, 4) for label in labels}
+    verdict = {"label": "clean" if bug_type == "none" else "buggy", "bug_type": bug_type, "confidence": 0.9,
+               "probs": probs, "window_lines": (1, 9)}
+    monkeypatch.setattr(agent, "run_detector", lambda code: (verdict, ""))
 
 
 def ask(question, code=BUGGY, name="counter.v"):
@@ -78,7 +89,7 @@ def test_without_a_file_no_tool_runs():
 @needs_lint
 def test_bug_question_runs_the_linter():
     answer = ask("Can you detect any bugs in my Verilog RTL design?").json()
-    assert answer["tools"] == ["lint_rtl"]
+    assert answer["tools"] == ["detect_bugs", "lint_rtl"]
     assert (7, "BLKSEQ") in [(f["line"], f["code"]) for f in answer["findings"]]
     assert "BLKSEQ" in answer["reply"]
 
@@ -95,9 +106,40 @@ def test_fix_question_repairs_the_bug_type_the_linter_points_at(monkeypatch):
     asked = []
     monkeypatch.setattr(agent, "repair", lambda code, bug_type: (asked.append(bug_type), (FIXED, ""))[1])
     answer = ask("Can you explain this bug and fix it?").json()
-    assert answer["tools"] == ["lint_rtl", "repair_rtl"] and asked == ["blocking_in_seq"]
+    assert answer["tools"] == ["detect_bugs", "lint_rtl", "repair_rtl"] and asked == ["blocking_in_seq"]
     assert answer["repair"]["patched"] == FIXED
     assert "+    else if (en) cnt <= cnt + 8'd1;" in answer["repair"]["diff"]
+
+
+def test_bug_question_runs_the_detector_and_charts_its_confidences(monkeypatch, tmp_path):
+    fake_detector(monkeypatch, "blocking_in_seq")
+    monkeypatch.setenv("PATH", str(tmp_path))                     # the linter's answer does not matter here
+    answer = ask("Can you detect any bugs in my Verilog RTL design?").json()
+    assert answer["tools"] == ["detect_bugs", "lint_rtl"]
+    assert answer["detection"]["bug_type"] == "blocking_in_seq" and answer["detection"]["window_lines"] == [1, 9]
+    assert len(answer["detection"]["probs"]) == 7
+    assert "blocking in seq bug (90% sure)" in answer["reply"]
+
+
+def test_fix_question_repairs_the_bug_type_the_detector_found(monkeypatch):
+    fake_detector(monkeypatch, "blocking_in_seq")
+    asked = []
+    monkeypatch.setattr(agent, "repair", lambda code, bug_type: (asked.append(bug_type), (FIXED, ""))[1])
+    answer = ask("Can you explain this bug and fix it?").json()
+    assert answer["tools"] == ["detect_bugs", "repair_rtl"] and asked == ["blocking_in_seq"]
+    assert answer["repair"]["patched"] == FIXED
+
+
+def test_a_clean_verdict_from_the_detector_is_reported(monkeypatch, tmp_path):
+    fake_detector(monkeypatch, "none")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    answer = ask("Check this design for bugs").json()
+    assert answer["detection"]["label"] == "clean" and "finds no bug (90% sure)" in answer["reply"]
+
+
+def test_a_missing_detector_is_said_plainly():
+    result = agent.run_tool("detect_bugs", "{}", {"name": "c.v", "code": BUGGY}, {})
+    assert result["ran"] is False and "not installed" in result["reason"]
 
 
 def test_a_missing_repair_model_is_said_plainly(monkeypatch, tmp_path):
@@ -150,7 +192,7 @@ def test_a_model_gets_the_file_and_the_results_of_the_tools_it_calls(monkeypatch
     assert requests[0].full_url == "https://llm.example/v1/chat/completions"
     assert requests[0].get_header("Authorization") == "Bearer secret-key" and first["model"] == "some-model"
     assert first["stream"] is False and requests[0].get_header("User-agent") == "rtl-doctor-portal"
-    assert [t["function"]["name"] for t in first["tools"]] == ["lint_rtl", "render_schematic", "repair_rtl"]
+    assert [t["function"]["name"] for t in first["tools"]] == ["detect_bugs", "lint_rtl", "render_schematic", "repair_rtl"]
     assert "   7|     else if (en) cnt = cnt + 8'd1;" in first["messages"][1]["content"]     # the numbered file
     tool_result = second["messages"][-1]
     assert tool_result["role"] == "tool" and tool_result["tool_call_id"] == "call_1"
